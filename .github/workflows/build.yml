@@ -1,0 +1,28 @@
+name: Build AppleWin
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release (32-bit)
+        run: msbuild AppleWin-VS2022.sln /m /p:Configuration=Release /p:Platform=Win32
+
+      - name: Collect files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Get-ChildItem -Recurse -Filter "AppleWin*.exe" | Where-Object { $_.FullName -notmatch '\\out\\' } | Copy-Item -Destination out
+          Copy-Item bin\keymap.txt out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AppleWin-keyremap
+          path: out

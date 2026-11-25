@@ -223,6 +223,9 @@
     <ClCompile Include="source\Debugger\Debugger_Win32.cpp">
       <Filter>Source Files\Debugger</Filter>
     </ClCompile>
+    <ClCompile Include="source\Windows\KeyRemap.cpp">
+      <Filter>Source Files\Windows</Filter>
+    </ClCompile>
     <ClCompile Include="source\Windows\HookFilter.cpp">
       <Filter>Source Files\Windows</Filter>
     </ClCompile>
@@ -569,6 +572,9 @@
     </ClInclude>
     <ClInclude Include="source\Debugger\Debugger_Win32.h">
       <Filter>Source Files\Debugger</Filter>
+    </ClInclude>
+    <ClInclude Include="source\Windows\KeyRemap.h">
+      <Filter>Source Files\Windows</Filter>
     </ClInclude>
     <ClInclude Include="source\Windows\HookFilter.h">
       <Filter>Source Files\Windows</Filter>

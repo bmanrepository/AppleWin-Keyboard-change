@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include "Windows/AppleWin.h"
 #include "Windows/HookFilter.h"
+#include "Windows/KeyRemap.h"
 #include "Interface.h"
 #include "Utilities.h"
 #include "CmdLine.h"
@@ -290,6 +291,7 @@ void EnterMessageLoop()
 	{
 		if (PeekMessage(&message, NULL, 0, 0, PM_REMOVE))
 		{
+			KeyRemap_Apply(message);
 			TranslateMessage(&message);
 			DispatchMessage(&message);
 
@@ -300,6 +302,7 @@ void EnterMessageLoop()
 					if (message.message == WM_QUIT)
 						return;
 
+					KeyRemap_Apply(message);
 					TranslateMessage(&message);
 					DispatchMessage(&message);
 				}
@@ -645,6 +648,9 @@ static void OneTimeInitialization(HINSTANCE passinstance)
 
 	GetProgramDirectory();
 	LogFileOutput("Init: GetProgramDirectory()\n");
+
+	KeyRemap_Init();
+	LogFileOutput("Init: KeyRemap_Init()\n");
 
 	if (g_bRegisterFileTypes)
 	{
