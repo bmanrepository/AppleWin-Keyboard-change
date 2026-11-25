@@ -34,6 +34,11 @@ GNU General Public License for more details.
 #include "KeyRemap.h"
 #include "Core.h"
 #include "Log.h"
+#include "../resource/resource.h"
+
+#include <algorithm>
+#include <map>
+#include <vector>
 
 static const char* const kKeymapFilename = "keymap.txt";
 
@@ -266,4 +271,162 @@ void KeyRemap_Apply(MSG& msg)
 
 	msg.wParam = newVK;
 	msg.lParam = lp;
+}
+
+//===========================================================================
+// Settings dialog
+
+static std::string KeyNameFromVK(BYTE vk)
+{
+	if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9'))
+		return std::string(1, (char)vk);
+
+	for (size_t i = 0; i < sizeof(g_keyNames) / sizeof(g_keyNames[0]); i++)
+	{
+		if (g_keyNames[i].vk == vk)
+			return g_keyNames[i].name;	// first name in table is the preferred one
+	}
+
+	char buf[8];
+	sprintf_s(buf, sizeof(buf), "0x%02X", vk);
+	return buf;
+}
+
+static bool SaveKeymap(const std::map<BYTE, BYTE>& map)
+{
+	FILE* f = fopen(g_keyMapPath.c_str(), "wt");
+	if (!f)
+		return false;
+
+	fputs("# AppleWin key remapping\n"
+		  "# Format:   <key you press> = <key the Apple II sees>\n"
+		  "# Edit here or via Configuration > Input > Key Remapping.\n\n", f);
+
+	for (std::map<BYTE, BYTE>::const_iterator it = map.begin(); it != map.end(); ++it)
+		fprintf(f, "%s = %s\n", KeyNameFromVK(it->first).c_str(), KeyNameFromVK(it->second).c_str());
+
+	fclose(f);
+
+	// Apply immediately
+	GetFileTime(g_keyMapPath, g_keyMapTime);
+	LoadKeymap();
+	return true;
+}
+
+static std::map<BYTE, BYTE> g_dlgMap;	// working copy while the dialog is open
+
+static void FillKeyCombo(HWND hCombo)
+{
+	std::vector<BYTE> vks;
+	for (BYTE c = 'A'; c <= 'Z'; c++) vks.push_back(c);
+	for (BYTE c = '0'; c <= '9'; c++) vks.push_back(c);
+	for (size_t i = 0; i < sizeof(g_keyNames) / sizeof(g_keyNames[0]); i++)
+	{
+		BYTE vk = g_keyNames[i].vk;
+		if (std::find(vks.begin(), vks.end(), vk) == vks.end())	// skip alias names
+			vks.push_back(vk);
+	}
+
+	for (size_t i = 0; i < vks.size(); i++)
+	{
+		LRESULT idx = SendMessageA(hCombo, CB_ADDSTRING, 0, (LPARAM)KeyNameFromVK(vks[i]).c_str());
+		SendMessageA(hCombo, CB_SETITEMDATA, (WPARAM)idx, (LPARAM)vks[i]);
+	}
+	SendMessageA(hCombo, CB_SETCURSEL, 0, 0);
+}
+
+static void RefreshList(HWND hDlg)
+{
+	HWND hList = GetDlgItem(hDlg, IDC_KEYREMAP_LIST);
+	SendMessageA(hList, LB_RESETCONTENT, 0, 0);
+
+	for (std::map<BYTE, BYTE>::const_iterator it = g_dlgMap.begin(); it != g_dlgMap.end(); ++it)
+	{
+		std::string text = KeyNameFromVK(it->first) + "   ->   " + KeyNameFromVK(it->second);
+		LRESULT idx = SendMessageA(hList, LB_ADDSTRING, 0, (LPARAM)text.c_str());
+		SendMessageA(hList, LB_SETITEMDATA, (WPARAM)idx, (LPARAM)it->first);
+	}
+}
+
+static BYTE GetComboVK(HWND hDlg, int id)
+{
+	LRESULT sel = SendDlgItemMessageA(hDlg, id, CB_GETCURSEL, 0, 0);
+	if (sel == CB_ERR)
+		return 0;
+	return (BYTE)SendDlgItemMessageA(hDlg, id, CB_GETITEMDATA, (WPARAM)sel, 0);
+}
+
+static INT_PTR CALLBACK KeyRemapDlgProc(HWND hDlg, UINT message, WPARAM wparam, LPARAM /*lparam*/)
+{
+	switch (message)
+	{
+	case WM_INITDIALOG:
+		CheckForChanges();		// pick up any hand edits to keymap.txt
+		g_dlgMap.clear();
+		for (int i = 0; i < 256; i++)
+			if (g_keyMap[i])
+				g_dlgMap[(BYTE)i] = g_keyMap[i];
+		FillKeyCombo(GetDlgItem(hDlg, IDC_KEYREMAP_FROM));
+		FillKeyCombo(GetDlgItem(hDlg, IDC_KEYREMAP_TO));
+		RefreshList(hDlg);
+		return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wparam))
+		{
+		case IDC_KEYREMAP_ADD:
+		{
+			BYTE src = GetComboVK(hDlg, IDC_KEYREMAP_FROM);
+			BYTE dst = GetComboVK(hDlg, IDC_KEYREMAP_TO);
+			if (src && dst)
+			{
+				if (src == dst)
+					g_dlgMap.erase(src);	// mapping a key to itself = no mapping
+				else
+					g_dlgMap[src] = dst;	// replaces any existing binding for this key
+				RefreshList(hDlg);
+			}
+			return TRUE;
+		}
+
+		case IDC_KEYREMAP_REMOVE:
+		{
+			LRESULT sel = SendDlgItemMessageA(hDlg, IDC_KEYREMAP_LIST, LB_GETCURSEL, 0, 0);
+			if (sel != LB_ERR)
+			{
+				BYTE src = (BYTE)SendDlgItemMessageA(hDlg, IDC_KEYREMAP_LIST, LB_GETITEMDATA, (WPARAM)sel, 0);
+				g_dlgMap.erase(src);
+				RefreshList(hDlg);
+			}
+			return TRUE;
+		}
+
+		case IDC_KEYREMAP_CLEAR:
+			g_dlgMap.clear();
+			RefreshList(hDlg);
+			return TRUE;
+
+		case IDOK:
+			if (!SaveKeymap(g_dlgMap))
+			{
+				std::string msg = "Could not save:\n" + g_keyMapPath;
+				MessageBoxA(hDlg, msg.c_str(), "Key Remapping", MB_ICONEXCLAMATION | MB_OK);
+				return TRUE;
+			}
+			EndDialog(hDlg, IDOK);
+			return TRUE;
+
+		case IDCANCEL:
+			EndDialog(hDlg, IDCANCEL);
+			return TRUE;
+		}
+		break;
+	}
+
+	return FALSE;
+}
+
+void KeyRemap_ShowDialog(HINSTANCE hInstance, HWND hParent)
+{
+	DialogBoxA(hInstance, MAKEINTRESOURCEA(IDD_KEYREMAP), hParent, KeyRemapDlgProc);
 }

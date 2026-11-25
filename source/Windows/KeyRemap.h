@@ -7,3 +7,4 @@
 
 void KeyRemap_Init();						// Load keymap.txt (call once at startup)
 void KeyRemap_Apply(MSG& msg);				// Call just before TranslateMessage()
+void KeyRemap_ShowDialog(HINSTANCE hInstance, HWND hParent);	// Edit bindings (saves keymap.txt)

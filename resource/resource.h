@@ -73,6 +73,7 @@
 #define IDD_PRINTER                     170
 #define IDD_MOUSECARD                   171
 #define IDD_RAMWORKS3                   172
+#define IDD_KEYREMAP                    180
 #define IDD_SATURN                      174
 #define IDD_MOCKINGBOARD                175
 #define IDC_KEYB_BUFFER_ENABLE          1005
@@ -183,6 +184,13 @@
 #define IDC_SATURN_128KB                1134
 #define IDC_SLOT_OPT_COMBO_MB_SSI263_SOCKET0 1135
 #define IDC_SLOT_OPT_COMBO_MB_SSI263_SOCKET1 1136
+#define IDC_KEY_REMAP                   1200
+#define IDC_KEYREMAP_LIST               1201
+#define IDC_KEYREMAP_FROM               1202
+#define IDC_KEYREMAP_TO                 1203
+#define IDC_KEYREMAP_ADD                1204
+#define IDC_KEYREMAP_REMOVE             1205
+#define IDC_KEYREMAP_CLEAR              1206
 #define IDC_SLOT_OPT_SC01_ENABLE        1137
 #define IDC_NO_SLOT_CLOCK               1138
 #define IDC_SLOT_OPT_COMBO_HDC_FW       1139

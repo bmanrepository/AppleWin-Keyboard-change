@@ -1,5 +1,6 @@
 # AppleWin key remapping
 # ======================
+# You can also edit bindings in AppleWin: Configuration > Input > Key Remapping.
 # Put this file next to AppleWin.exe. It is re-read automatically
 # whenever you save it, so you can edit it while a game is running.
 #

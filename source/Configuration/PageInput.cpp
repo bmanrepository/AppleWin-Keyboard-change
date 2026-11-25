@@ -32,6 +32,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "../Registry.h"
 #include "../resource/resource.h"
 #include "../Windows/HookFilter.h"
+#include "../Windows/KeyRemap.h"
 
 CPageInput* CPageInput::ms_this = 0;	// reinit'd in ctor
 
@@ -145,6 +146,10 @@ INT_PTR CPageInput::DlgProcInternal(HWND hWnd, UINT message, WPARAM wparam, LPAR
 
 		case IDC_PASTE_FROM_CLIPBOARD:
 			ClipboardInitiatePaste();
+			break;
+
+		case IDC_KEY_REMAP:
+			KeyRemap_ShowDialog(GetModuleHandle(NULL), hWnd);
 			break;
 		}
 		break;
