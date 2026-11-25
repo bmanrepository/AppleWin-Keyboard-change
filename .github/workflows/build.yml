@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to publish the Release
+
 jobs:
   build:
     runs-on: windows-2022
@@ -26,3 +29,15 @@ jobs:
         with:
           name: AppleWin-keyremap
           path: out
+
+      # Permanent download: replace the "latest" Release with this build
+      - name: Publish Release
+        if: github.ref == 'refs/heads/master'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path out\* -DestinationPath AppleWin-keyremap.zip -Force
+          gh release delete latest --cleanup-tag --yes 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create latest AppleWin-keyremap.zip --target $env:GITHUB_SHA --title "AppleWin with key remapping (latest build)" --notes "Unzip, keep keymap.txt next to AppleWin.exe. Configuration > Input > Key Remapping. Built from commit $env:GITHUB_SHA."
