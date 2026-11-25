@@ -323,7 +323,7 @@ struct AppleKey
 	const char* label;
 	BYTE vk;		// key the Apple II receives (0 = can't be remapped to)
 	float w;		// width in key units (each row = 15 units)
-};
+};	// label == NULL: the power light (not a key)
 
 static const AppleKey g_row0[] = {
 	{"ESC",VK_ESCAPE,1}, {"1",'1',1}, {"2",'2',1}, {"3",'3',1}, {"4",'4',1}, {"5",'5',1},
@@ -342,7 +342,7 @@ static const AppleKey g_row3[] = {
 	{"N",'N',1}, {"M",'M',1}, {",",VK_OEM_COMMA,1}, {".",VK_OEM_PERIOD,1}, {"/",VK_OEM_2,1},
 	{"SHIFT",0,2.75f} };
 static const AppleKey g_row4[] = {
-	{"CAPS LOCK",0,1.5f}, {"Open Apple",VK_LMENU,1}, {"`",VK_OEM_3,1}, {"",VK_SPACE,6.5f},
+	{"CAPS LOCK",0,1.5f}, {"`",VK_OEM_3,1}, {NULL,0,1}, {"Open Apple",VK_LMENU,1}, {"",VK_SPACE,5.5f},
 	{"Solid Apple",VK_RMENU,1}, {"\x11",VK_LEFT,1}, {"\x10",VK_RIGHT,1}, {"\x1F",VK_DOWN,1}, {"\x1E",VK_UP,1} };
 
 struct KeyRow { const AppleKey* keys; int count; };
@@ -383,7 +383,7 @@ static const AppleKey* HitTest(HWND hWnd, int x, int y)
 		{
 			RECT r;
 			GetKeyRect(client, row, col, r);
-			if (PtInRect(&r, pt))
+			if (g_rows[row].keys[col].label && PtInRect(&r, pt))
 				return &g_rows[row].keys[col];
 		}
 	return NULL;
@@ -471,6 +471,17 @@ static void PaintKeyboard(HWND hWnd, HDC hdcWin)
 			const AppleKey& key = g_rows[row].keys[col];
 			RECT r;
 			GetKeyRect(client, row, col, r);
+
+			if (!key.label)		// power light
+			{
+				int cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, rad = (r.bottom - r.top) / 6;
+				HBRUSH led = CreateSolidBrush(RGB(60, 55, 50));
+				HGDIOBJ oldBrush = SelectObject(hdc, led);
+				Ellipse(hdc, cx - rad, cy - rad, cx + rad, cy + rad);
+				SelectObject(hdc, oldBrush);
+				DeleteObject(led);
+				continue;
+			}
 
 			std::string bound = key.vk ? BoundKeysText(key.vk) : "";
 			COLORREF face;
