@@ -313,47 +313,344 @@ static bool SaveKeymap(const std::map<BYTE, BYTE>& map)
 	return true;
 }
 
-static std::map<BYTE, BYTE> g_dlgMap;	// working copy while the dialog is open
+static std::map<BYTE, BYTE> g_dlgMap;	// working copy while the dialog is open (PC key -> Apple key)
 
-static void FillKeyCombo(HWND hCombo)
+//---------------------------------------------------------------------------
+// Apple IIe keyboard picture
+
+struct AppleKey
 {
-	std::vector<BYTE> vks;
-	for (BYTE c = 'A'; c <= 'Z'; c++) vks.push_back(c);
-	for (BYTE c = '0'; c <= '9'; c++) vks.push_back(c);
-	for (size_t i = 0; i < sizeof(g_keyNames) / sizeof(g_keyNames[0]); i++)
-	{
-		BYTE vk = g_keyNames[i].vk;
-		if (std::find(vks.begin(), vks.end(), vk) == vks.end())	// skip alias names
-			vks.push_back(vk);
-	}
+	const char* label;
+	BYTE vk;		// key the Apple II receives (0 = can't be remapped to)
+	float w;		// width in key units (each row = 15 units)
+};
 
-	for (size_t i = 0; i < vks.size(); i++)
-	{
-		LRESULT idx = SendMessageA(hCombo, CB_ADDSTRING, 0, (LPARAM)KeyNameFromVK(vks[i]).c_str());
-		SendMessageA(hCombo, CB_SETITEMDATA, (WPARAM)idx, (LPARAM)vks[i]);
-	}
-	SendMessageA(hCombo, CB_SETCURSEL, 0, 0);
+static const AppleKey g_row0[] = {
+	{"ESC",VK_ESCAPE,1}, {"1",'1',1}, {"2",'2',1}, {"3",'3',1}, {"4",'4',1}, {"5",'5',1},
+	{"6",'6',1}, {"7",'7',1}, {"8",'8',1}, {"9",'9',1}, {"0",'0',1},
+	{"-",VK_OEM_MINUS,1}, {"=",VK_OEM_PLUS,1}, {"DELETE",VK_DELETE,2} };
+static const AppleKey g_row1[] = {
+	{"TAB",VK_TAB,1.5f}, {"Q",'Q',1}, {"W",'W',1}, {"E",'E',1}, {"R",'R',1}, {"T",'T',1},
+	{"Y",'Y',1}, {"U",'U',1}, {"I",'I',1}, {"O",'O',1}, {"P",'P',1},
+	{"[",VK_OEM_4,1}, {"]",VK_OEM_6,1}, {"\\",VK_OEM_5,1.5f} };
+static const AppleKey g_row2[] = {
+	{"CONTROL",0,1.75f}, {"A",'A',1}, {"S",'S',1}, {"D",'D',1}, {"F",'F',1}, {"G",'G',1},
+	{"H",'H',1}, {"J",'J',1}, {"K",'K',1}, {"L",'L',1},
+	{";",VK_OEM_1,1}, {"'",VK_OEM_7,1}, {"RETURN",VK_RETURN,2.25f} };
+static const AppleKey g_row3[] = {
+	{"SHIFT",0,2.25f}, {"Z",'Z',1}, {"X",'X',1}, {"C",'C',1}, {"V",'V',1}, {"B",'B',1},
+	{"N",'N',1}, {"M",'M',1}, {",",VK_OEM_COMMA,1}, {".",VK_OEM_PERIOD,1}, {"/",VK_OEM_2,1},
+	{"SHIFT",0,2.75f} };
+static const AppleKey g_row4[] = {
+	{"CAPS LOCK",0,1.5f}, {"Open Apple",VK_LMENU,1}, {"`",VK_OEM_3,1}, {"",VK_SPACE,6.5f},
+	{"Solid Apple",VK_RMENU,1}, {"\x11",VK_LEFT,1}, {"\x10",VK_RIGHT,1}, {"\x1F",VK_DOWN,1}, {"\x1E",VK_UP,1} };
+
+struct KeyRow { const AppleKey* keys; int count; };
+static const KeyRow g_rows[] = {
+	{g_row0, sizeof(g_row0)/sizeof(g_row0[0])}, {g_row1, sizeof(g_row1)/sizeof(g_row1[0])},
+	{g_row2, sizeof(g_row2)/sizeof(g_row2[0])}, {g_row3, sizeof(g_row3)/sizeof(g_row3[0])},
+	{g_row4, sizeof(g_row4)/sizeof(g_row4[0])} };
+static const int kNumRows = sizeof(g_rows)/sizeof(g_rows[0]);
+
+static const char* const kKbdClass = "AppleWinKeyRemapKeyboard";
+static const AppleKey* g_selectedKey = NULL;	// Apple key waiting for a PC key press
+static HWND g_hDlg = NULL;
+
+static bool GetKeyRect(const RECT& client, int row, int col, RECT& r)
+{
+	const int margin = 6, gap = 3;
+	float unit = (float)(client.right - client.left - 2*margin) / 15.0f;
+	int rowH = (client.bottom - client.top - 2*margin) / kNumRows;
+
+	float x = (float)margin;
+	for (int i = 0; i < col; i++)
+		x += g_rows[row].keys[i].w * unit;
+
+	r.left   = (int)x + gap/2;
+	r.right  = (int)(x + g_rows[row].keys[col].w * unit) - gap/2;
+	r.top    = margin + row * rowH + gap/2;
+	r.bottom = margin + (row + 1) * rowH - gap/2;
+	return true;
 }
 
-static void RefreshList(HWND hDlg)
+static const AppleKey* HitTest(HWND hWnd, int x, int y)
 {
-	HWND hList = GetDlgItem(hDlg, IDC_KEYREMAP_LIST);
-	SendMessageA(hList, LB_RESETCONTENT, 0, 0);
+	RECT client;
+	GetClientRect(hWnd, &client);
+	POINT pt = {x, y};
+	for (int row = 0; row < kNumRows; row++)
+		for (int col = 0; col < g_rows[row].count; col++)
+		{
+			RECT r;
+			GetKeyRect(client, row, col, r);
+			if (PtInRect(&r, pt))
+				return &g_rows[row].keys[col];
+		}
+	return NULL;
+}
 
+// PC keys currently bound to this Apple key, eg. "Q, F5"
+static std::string BoundKeysText(BYTE appleVK)
+{
+	std::string s;
 	for (std::map<BYTE, BYTE>::const_iterator it = g_dlgMap.begin(); it != g_dlgMap.end(); ++it)
-	{
-		std::string text = KeyNameFromVK(it->first) + "   ->   " + KeyNameFromVK(it->second);
-		LRESULT idx = SendMessageA(hList, LB_ADDSTRING, 0, (LPARAM)text.c_str());
-		SendMessageA(hList, LB_SETITEMDATA, (WPARAM)idx, (LPARAM)it->first);
-	}
+		if (it->second == appleVK)
+		{
+			if (!s.empty()) s += ", ";
+			s += KeyNameFromVK(it->first);
+		}
+	return s;
 }
 
-static BYTE GetComboVK(HWND hDlg, int id)
+static bool IsOnPicture(BYTE vk)
 {
-	LRESULT sel = SendDlgItemMessageA(hDlg, id, CB_GETCURSEL, 0, 0);
-	if (sel == CB_ERR)
+	for (int row = 0; row < kNumRows; row++)
+		for (int col = 0; col < g_rows[row].count; col++)
+			if (g_rows[row].keys[col].vk == vk)
+				return true;
+	return false;
+}
+
+static void SetStatus(const std::string& text)
+{
+	if (g_hDlg)
+		SetDlgItemTextA(g_hDlg, IDC_KEYREMAP_STATUS, text.c_str());
+}
+
+static void ShowIdleStatus()
+{
+	int other = 0;
+	for (std::map<BYTE, BYTE>::const_iterator it = g_dlgMap.begin(); it != g_dlgMap.end(); ++it)
+		if (!IsOnPicture(it->second))
+			other++;
+
+	char buf[160];
+	if (other)
+		sprintf_s(buf, sizeof(buf), "%d binding(s): %d not shown on the picture (eg. numpad keys from keymap.txt) - these are kept.", (int)g_dlgMap.size(), other);
+	else
+		sprintf_s(buf, sizeof(buf), "%d binding(s). Green keys have a PC key assigned (shown in blue).", (int)g_dlgMap.size());
+	SetStatus(buf);
+}
+
+static void PaintKeyboard(HWND hWnd, HDC hdcWin)
+{
+	RECT client;
+	GetClientRect(hWnd, &client);
+
+	// Double-buffer to avoid flicker
+	HDC hdc = CreateCompatibleDC(hdcWin);
+	HBITMAP bmp = CreateCompatibleBitmap(hdcWin, client.right, client.bottom);
+	HGDIOBJ oldBmp = SelectObject(hdc, bmp);
+
+	HBRUSH bgBrush = CreateSolidBrush(RGB(196, 180, 150));		// beige Apple IIe case
+	FillRect(hdc, &client, bgBrush);
+	DeleteObject(bgBrush);
+
+	HFONT dlgFont = (HFONT)SendMessage(GetParent(hWnd), WM_GETFONT, 0, 0);
+	LOGFONTA lf;
+	GetObjectA(dlgFont, sizeof(lf), &lf);
+	lf.lfWeight = FW_BOLD;
+	HFONT boldFont = CreateFontIndirectA(&lf);
+	lf.lfWeight = FW_NORMAL;
+	lf.lfHeight = lf.lfHeight * 4 / 5;
+	HFONT smallFont = CreateFontIndirectA(&lf);
+	lf.lfFaceName[0] = 0;
+	strcpy_s(lf.lfFaceName, sizeof(lf.lfFaceName), "Marlett");	// arrow glyphs
+	lf.lfCharSet = SYMBOL_CHARSET;
+	lf.lfHeight = lf.lfHeight * 3 / 2;
+	HFONT arrowFont = CreateFontIndirectA(&lf);
+
+	SetBkMode(hdc, TRANSPARENT);
+	HPEN pen = CreatePen(PS_SOLID, 1, RGB(90, 80, 70));
+	HGDIOBJ oldPen = SelectObject(hdc, pen);
+
+	for (int row = 0; row < kNumRows; row++)
+	{
+		for (int col = 0; col < g_rows[row].count; col++)
+		{
+			const AppleKey& key = g_rows[row].keys[col];
+			RECT r;
+			GetKeyRect(client, row, col, r);
+
+			std::string bound = key.vk ? BoundKeysText(key.vk) : "";
+			COLORREF face;
+			if (&key == g_selectedKey)	face = RGB(255, 220, 80);		// waiting for PC key
+			else if (!key.vk)			face = RGB(170, 160, 145);		// not remappable
+			else if (!bound.empty())	face = RGB(150, 215, 140);		// has a binding
+			else						face = RGB(240, 234, 220);
+
+			HBRUSH b = CreateSolidBrush(face);
+			HGDIOBJ oldBrush = SelectObject(hdc, b);
+			RoundRect(hdc, r.left, r.top, r.right, r.bottom, 6, 6);
+			SelectObject(hdc, oldBrush);
+			DeleteObject(b);
+
+			// Key label (top part)
+			RECT tr = r;
+			InflateRect(&tr, -2, -2);
+			bool isArrow = (key.vk >= VK_LEFT && key.vk <= VK_DOWN);
+			const char* label = key.label;
+			if (isArrow)	// Marlett: 3=left 4=right 5=up 6=down
+				label = key.vk == VK_LEFT ? "3" : key.vk == VK_RIGHT ? "4" : key.vk == VK_UP ? "5" : "6";
+
+			SelectObject(hdc, isArrow ? arrowFont : boldFont);
+			SetTextColor(hdc, key.vk ? RGB(40, 35, 30) : RGB(100, 95, 90));
+			if (bound.empty())
+				DrawTextA(hdc, label, -1, &tr, DT_CENTER | DT_VCENTER | DT_WORDBREAK | (strchr(label, ' ') ? 0 : DT_SINGLELINE));
+			else
+			{
+				RECT top = tr; top.bottom = tr.top + (tr.bottom - tr.top) / 2;
+				DrawTextA(hdc, label, -1, &top, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+				// Bound PC key(s) (bottom part, blue)
+				RECT bot = tr; bot.top = top.bottom;
+				SelectObject(hdc, smallFont);
+				SetTextColor(hdc, RGB(0, 60, 200));
+				DrawTextA(hdc, bound.c_str(), -1, &bot, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+			}
+		}
+	}
+
+	SelectObject(hdc, oldPen);
+	DeleteObject(pen);
+
+	BitBlt(hdcWin, 0, 0, client.right, client.bottom, hdc, 0, 0, SRCCOPY);
+	SelectObject(hdc, oldBmp);
+	DeleteObject(bmp);
+	DeleteDC(hdc);
+	DeleteObject(boldFont);
+	DeleteObject(smallFont);
+	DeleteObject(arrowFont);
+}
+
+static void CancelSelection(HWND hWnd)
+{
+	g_selectedKey = NULL;
+	InvalidateRect(hWnd, NULL, FALSE);
+	ShowIdleStatus();
+}
+
+static void OnPCKeyPressed(HWND hWnd, WPARAM wparam, LPARAM lparam)
+{
+	BYTE vk = (BYTE)wparam;
+	if (vk == VK_MENU)
+		vk = (HIWORD(lparam) & KF_EXTENDED) ? VK_RMENU : VK_LMENU;
+
+	if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_CAPITAL || vk == VK_LWIN || vk == VK_RWIN || vk == VK_NUMLOCK)
+	{
+		SetStatus("That PC key can't be used (Shift, Ctrl, Caps Lock, Win, Num Lock). Press another key, or click the yellow key to cancel.");
+		return;
+	}
+
+	BYTE appleVK = g_selectedKey->vk;
+	std::string apple = g_selectedKey->label[0] ? g_selectedKey->label : "SPACE";
+	if (appleVK >= VK_LEFT && appleVK <= VK_DOWN)
+		apple = KeyNameFromVK(appleVK);
+
+	std::string msg;
+	if (vk == appleVK)
+	{
+		g_dlgMap.erase(vk);		// a key mapped to itself = normal behaviour
+		msg = "PC key " + KeyNameFromVK(vk) + " is back to normal.";
+	}
+	else
+	{
+		g_dlgMap[vk] = appleVK;	// replaces whatever this PC key did before
+		msg = "PC key " + KeyNameFromVK(vk) + " now sends Apple " + apple + ".";
+	}
+
+	g_selectedKey = NULL;
+	InvalidateRect(hWnd, NULL, FALSE);
+	SetStatus(msg + " Click another key, or OK to save.");
+}
+
+static LRESULT CALLBACK KeyboardWndProc(HWND hWnd, UINT message, WPARAM wparam, LPARAM lparam)
+{
+	switch (message)
+	{
+	case WM_PAINT:
+	{
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hWnd, &ps);
+		PaintKeyboard(hWnd, hdc);
+		EndPaint(hWnd, &ps);
 		return 0;
-	return (BYTE)SendDlgItemMessageA(hDlg, id, CB_GETITEMDATA, (WPARAM)sel, 0);
+	}
+
+	case WM_ERASEBKGND:
+		return 1;
+
+	case WM_LBUTTONDOWN:
+	{
+		SetFocus(hWnd);
+		const AppleKey* key = HitTest(hWnd, (short)LOWORD(lparam), (short)HIWORD(lparam));
+		if (!key || key == g_selectedKey)
+		{
+			CancelSelection(hWnd);
+		}
+		else if (!key->vk)
+		{
+			g_selectedKey = NULL;
+			InvalidateRect(hWnd, NULL, FALSE);
+			SetStatus(std::string(key->label) + " can't be remapped.");
+		}
+		else
+		{
+			g_selectedKey = key;
+			InvalidateRect(hWnd, NULL, FALSE);
+			std::string name = key->label[0] ? key->label : "SPACE";
+			if (key->vk >= VK_LEFT && key->vk <= VK_DOWN)
+				name = KeyNameFromVK(key->vk);
+			SetStatus("Now press the PC key that should send Apple " + name + "...  (click the yellow key again to cancel)");
+		}
+		return 0;
+	}
+
+	case WM_RBUTTONDOWN:	// clear all PC keys bound to this Apple key
+	{
+		const AppleKey* key = HitTest(hWnd, (short)LOWORD(lparam), (short)HIWORD(lparam));
+		if (key && key->vk)
+		{
+			for (std::map<BYTE, BYTE>::iterator it = g_dlgMap.begin(); it != g_dlgMap.end(); )
+			{
+				if (it->second == key->vk) it = g_dlgMap.erase(it);
+				else ++it;
+			}
+		}
+		CancelSelection(hWnd);
+		return 0;
+	}
+
+	case WM_GETDLGCODE:
+		// While waiting for a key, take every key (Tab, Enter, Esc, arrows...) instead of the dialog
+		if (g_selectedKey)
+			return DLGC_WANTALLKEYS | DLGC_WANTARROWS | DLGC_WANTTAB | DLGC_WANTCHARS | DLGC_WANTMESSAGE;
+		return 0;
+
+	case WM_KEYDOWN:
+	case WM_SYSKEYDOWN:
+		if (g_selectedKey)
+		{
+			if (!(HIWORD(lparam) & KF_REPEAT))
+				OnPCKeyPressed(hWnd, wparam, lparam);
+			return 0;
+		}
+		break;
+
+	case WM_SYSKEYUP:
+	case WM_SYSCHAR:
+	case WM_CHAR:
+		if (g_selectedKey || message != WM_CHAR)
+			return 0;	// swallow, so Alt doesn't beep / open the system menu
+		break;
+
+	case WM_KILLFOCUS:
+		if (g_selectedKey)
+			CancelSelection(hWnd);
+		break;
+	}
+
+	return DefWindowProcA(hWnd, message, wparam, lparam);
 }
 
 static INT_PTR CALLBACK KeyRemapDlgProc(HWND hDlg, UINT message, WPARAM wparam, LPARAM /*lparam*/)
@@ -361,49 +658,24 @@ static INT_PTR CALLBACK KeyRemapDlgProc(HWND hDlg, UINT message, WPARAM wparam, 
 	switch (message)
 	{
 	case WM_INITDIALOG:
+		g_hDlg = hDlg;
+		g_selectedKey = NULL;
 		CheckForChanges();		// pick up any hand edits to keymap.txt
 		g_dlgMap.clear();
 		for (int i = 0; i < 256; i++)
 			if (g_keyMap[i])
 				g_dlgMap[(BYTE)i] = g_keyMap[i];
-		FillKeyCombo(GetDlgItem(hDlg, IDC_KEYREMAP_FROM));
-		FillKeyCombo(GetDlgItem(hDlg, IDC_KEYREMAP_TO));
-		RefreshList(hDlg);
+		ShowIdleStatus();
 		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wparam))
 		{
-		case IDC_KEYREMAP_ADD:
-		{
-			BYTE src = GetComboVK(hDlg, IDC_KEYREMAP_FROM);
-			BYTE dst = GetComboVK(hDlg, IDC_KEYREMAP_TO);
-			if (src && dst)
-			{
-				if (src == dst)
-					g_dlgMap.erase(src);	// mapping a key to itself = no mapping
-				else
-					g_dlgMap[src] = dst;	// replaces any existing binding for this key
-				RefreshList(hDlg);
-			}
-			return TRUE;
-		}
-
-		case IDC_KEYREMAP_REMOVE:
-		{
-			LRESULT sel = SendDlgItemMessageA(hDlg, IDC_KEYREMAP_LIST, LB_GETCURSEL, 0, 0);
-			if (sel != LB_ERR)
-			{
-				BYTE src = (BYTE)SendDlgItemMessageA(hDlg, IDC_KEYREMAP_LIST, LB_GETITEMDATA, (WPARAM)sel, 0);
-				g_dlgMap.erase(src);
-				RefreshList(hDlg);
-			}
-			return TRUE;
-		}
-
 		case IDC_KEYREMAP_CLEAR:
 			g_dlgMap.clear();
-			RefreshList(hDlg);
+			g_selectedKey = NULL;
+			InvalidateRect(GetDlgItem(hDlg, IDC_KEYREMAP_KB), NULL, FALSE);
+			ShowIdleStatus();
 			return TRUE;
 
 		case IDOK:
@@ -421,6 +693,11 @@ static INT_PTR CALLBACK KeyRemapDlgProc(HWND hDlg, UINT message, WPARAM wparam, 
 			return TRUE;
 		}
 		break;
+
+	case WM_DESTROY:
+		g_hDlg = NULL;
+		g_selectedKey = NULL;
+		break;
 	}
 
 	return FALSE;
@@ -428,5 +705,17 @@ static INT_PTR CALLBACK KeyRemapDlgProc(HWND hDlg, UINT message, WPARAM wparam, 
 
 void KeyRemap_ShowDialog(HINSTANCE hInstance, HWND hParent)
 {
+	static bool registered = false;
+	if (!registered)
+	{
+		WNDCLASSA wc = {};
+		wc.style = CS_HREDRAW | CS_VREDRAW;
+		wc.lpfnWndProc = KeyboardWndProc;
+		wc.hInstance = hInstance;
+		wc.hCursor = LoadCursor(NULL, IDC_HAND);
+		wc.lpszClassName = kKbdClass;
+		registered = RegisterClassA(&wc) != 0;
+	}
+
 	DialogBoxA(hInstance, MAKEINTRESOURCEA(IDD_KEYREMAP), hParent, KeyRemapDlgProc);
 }

@@ -185,11 +185,8 @@
 #define IDC_SLOT_OPT_COMBO_MB_SSI263_SOCKET0 1135
 #define IDC_SLOT_OPT_COMBO_MB_SSI263_SOCKET1 1136
 #define IDC_KEY_REMAP                   1200
-#define IDC_KEYREMAP_LIST               1201
-#define IDC_KEYREMAP_FROM               1202
-#define IDC_KEYREMAP_TO                 1203
-#define IDC_KEYREMAP_ADD                1204
-#define IDC_KEYREMAP_REMOVE             1205
+#define IDC_KEYREMAP_KB                 1201
+#define IDC_KEYREMAP_STATUS             1202
 #define IDC_KEYREMAP_CLEAR              1206
 #define IDC_SLOT_OPT_SC01_ENABLE        1137
 #define IDC_NO_SLOT_CLOCK               1138
